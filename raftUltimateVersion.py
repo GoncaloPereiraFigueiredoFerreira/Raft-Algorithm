@@ -363,6 +363,8 @@ class Raft:
                                         # Clear all in from and replace the current one
                                         for i in range(appendIndexLeader,len(self.logs)): 
                                             if len(self.logs)>0: self.logs.pop(appendIndexLeader)
+                                        
+                                        #TODO Falta verificar o termo
                                         self.logs.append(e)
                                         self.lastAppended=appendIndexLeader
                                         prevTermLeader= e[3]
@@ -378,6 +380,7 @@ class Raft:
                         if msg.body.sucess:
                             self.matchIndex[msg.src] = self.lastAppended
                             #self.nextIndex[msg.src]= self.lastAppended +1
+                            #TODO: Rever commit votes
                             if self.lastAppended > self.commitIndex:
                                 commitVotes =1
                                 for i in self.matchIndex.keys():
@@ -398,6 +401,7 @@ class Raft:
                                             leaderID=self.node_id)
                         else:
                             #AppendEntries fails because of log inconsistency: decrement nextIndex and retry
+                            #TODO Improvement needed
                             self.nextIndex[msg.src]-=1
                             pass
 
