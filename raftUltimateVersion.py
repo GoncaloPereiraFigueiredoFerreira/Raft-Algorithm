@@ -4,6 +4,7 @@ import logging
 from ms import receiveAll, reply, send
 import random
 import threading
+from math import comb
 
         
 logging.getLogger().setLevel(logging.DEBUG)
@@ -15,6 +16,7 @@ class Raft:
         self.node_id=None
         self.neighbours = []
         self.majority = 0        # Majority of nodes
+        self.prob = 0            # Probabilidade de dar redirect para o leader 
 
         # State
         self.current_term = 0       # Termo atual
@@ -145,6 +147,11 @@ class Raft:
                         for n in self.neighbours:
                             self.nextIndex[n]=0
                         
+                        n = len(self.neighbours)
+
+                        self.prob = 1 if len(n) <= 3 else comb(n-3,(n%2) - 1)/comb(n-2,n%2)
+                        self.prob = (self.prob*(n-2))/((n+self.prob)*(n-2))
+
                         logging.info('node %s initialized', self.node_id)
                         reply(msg, type='init_ok')
                         
@@ -159,12 +166,16 @@ class Raft:
                             else:
                                 reply(msg,type="read_ok", value=value)
                         else:
-                            logging.debug("Read request to a follower redirect! To NodeID: %s",self.leader)
-                            for i in self.neighbours:
-                                if i != self.node_id:
-                                    send(self.node_id,i,type="q_read",key=key,id=messageid)
-                            logging.debug(value)
-                            self.q_buffer[messageid] = (1,{value:1},msg) 
+                            if random.randint(0,100) * 0.01 <= self.prob:
+                                logging.debug("Read request to a follower redirect! To NodeID:%s",self.leader)
+                                if self.leader != None:send(self.node_id,self.leader,value=msg,type="redirect")
+                            else: 
+                                logging.debug("Read request to quorum read")
+                                for i in self.neighbours:
+                                    if i != self.node_id:   #TODO: Faltar ver se se pode tirar o leader 
+                                        send(self.node_id,i,type="q_read",key=key,id=messageid)
+                                logging.debug(value)
+                                self.q_buffer[messageid] = (1,{value:1},msg) 
 
                     case "write":
                         if self.imLeader():
