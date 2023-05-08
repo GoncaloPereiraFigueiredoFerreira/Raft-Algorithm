@@ -149,7 +149,6 @@ class Raft:
                         reply(msg, type='init_ok')
                         
                     case "read":
-                        # TODO: Implement read quorum
                         key = msg.body.key
                         value = self.kv[key] if key in self.kv else None
 
@@ -315,7 +314,6 @@ class Raft:
                         #Ignoras a mensagem 
                         mtype="ignore_msg"
                     #Envia msg ou torna-te candidato
-                    #TODO: problema aqui
                 
                 if self.commitIndex < msg_commit and mtype!="ignore_msg":    
                     self.commitEntry(msg_commit)
@@ -411,7 +409,7 @@ class Raft:
                                 
                     case "vote_request":
                         if self.current_term <= msg.body.term and (self.voted_for==None or self.voted_for == msg.src) and (msg.body.lastLogIndex >= self.lastAppended):    
-                            if (len(self.logs)>0 and self.logs[msg.body.lastLogIndex][3] == msg.body.lastLogTerm) or len(self.logs)==0:
+                            if (len(self.logs)>0 and self.logs[msg.body.lastLogIndex][3] <= msg.body.lastLogTerm) or len(self.logs)==0:
                                 self.voted_for=msg.src
                                 send(self.node_id,msg.src,type="vote_response",term=self.current_term,commitedLogs=self.commitIndex,vote=True)
                             else:
