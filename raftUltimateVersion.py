@@ -374,6 +374,7 @@ class Raft:
                                 type="append_reply",
                                 term = self.current_term,
                                 commitedLogs=self.commitIndex,
+                                lastAppended = self.lastAppended,
                                 sucess=sucess)
                     
                     case "append_reply":
@@ -402,7 +403,7 @@ class Raft:
                         else:
                             #AppendEntries fails because of log inconsistency: decrement nextIndex and retry
                             #TODO Improvement needed
-                            self.nextIndex[msg.src]-=1
+                            self.nextIndex[msg.src] = msg.body.lastAppended
                             pass
 
                     case "commit_entries":
