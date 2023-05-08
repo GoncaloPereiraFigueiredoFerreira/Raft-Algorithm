@@ -378,27 +378,31 @@ class Raft:
                     
                     case "append_reply":
                         if msg.body.sucess:
-                            self.matchIndex[msg.src] = self.lastAppended
-                            #self.nextIndex[msg.src]= self.lastAppended +1
-                            #TODO: Rever commit votes
+                            self.matchIndex[msg.src] = msg.body.lastAppended
                             if self.lastAppended > self.commitIndex:
-                                commitVotes =1
-                                for i in self.matchIndex.keys():
-                                    if self.matchIndex[i]==self.lastAppended:
-                                        commitVotes+=1
-                                if commitVotes >= self.majority:
-                                    #Start commit process
-                                    self.commitIndex+=1
-                                    self.kv[self.logs[self.commitIndex][0]]=self.logs[self.commitIndex][1]
-                                    rep_msg = self.messages[self.logs[self.commitIndex][2]]
-                                    rep_type = "write_ok" if rep_msg.body.type == "write" else "cas_ok"
-                                    reply(rep_msg, type=rep_type)
-                                    for n in self.neighbours:
-                                        send(self.node_id,n,
-                                            type="commit_entries",
-                                            term=self.current_term,
-                                            commitedLogs= self.commitIndex,
-                                            leaderID=self.node_id)
+                                for k in range(self.commitIndex+1,self.lastAppended+1):
+                                    counter = 0
+                                   
+                                    for i in self.matchIndex.keys():
+                                        if i == self.node_id:
+                                            counter+=1
+                                        elif self.matchIndex[i] >= k:
+                                            counter+=1
+                                    if counter>=self.majority:
+                                      self.commitIndex+=1
+                                      self.kv[self.logs[self.commitIndex][0]]=self.logs[self.commitIndex][1]
+                                      rep_msg = self.messages[self.logs[self.commitIndex][2]]
+                                      rep_type = "write_ok" if rep_msg.body.type == "write" else "cas_ok"
+                                      reply(rep_msg, type=rep_type)
+                                      for n in self.neighbours:
+                                          send(self.node_id,n,
+                                              type="commit_entries",
+                                              term=self.current_term,
+                                              commitedLogs= self.commitIndex,
+                                              leaderID=self.node_id)
+                                    else:
+                                        break
+                                    
                         else:
                             #AppendEntries fails because of log inconsistency: decrement nextIndex and retry
                             #TODO Improvement needed
