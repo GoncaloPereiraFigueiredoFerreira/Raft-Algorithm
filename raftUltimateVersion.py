@@ -362,17 +362,18 @@ class Raft:
                                         for i in range(appendIndexLeader,len(self.logs)): 
                                             if len(self.logs)>0: self.logs.pop(appendIndexLeader)
                                         
-                                        #TODO Falta verificar o termo
-                                        self.logs.append(e)
-                                        self.lastAppended=appendIndexLeader
-                                        prevTermLeader= e[3]
-                                        prevLogLeader+=1                     
+                                        if self.logs[prevLogLeader][3] == prevTermLeader:
+                                            self.logs.append(e)
+                                            self.lastAppended=appendIndexLeader
+                                            prevTermLeader= e[3]
+                                            prevLogLeader+=1  
+                                        else:
+                                            sucess=False                   
                                     
                             send(self.node_id,msg.src,
                                 type="append_reply",
                                 term = self.current_term,
                                 commitedLogs=self.commitIndex,
-                                lastAppended = self.lastAppended,
                                 sucess=sucess)
                     
                     case "append_reply":
@@ -401,7 +402,7 @@ class Raft:
                         else:
                             #AppendEntries fails because of log inconsistency: decrement nextIndex and retry
                             #TODO Improvement needed
-                            self.nextIndex[msg.src] = msg.body.lastAppended
+                            self.nextIndex[msg.src]-=1
                             pass
 
                     case "commit_entries":
