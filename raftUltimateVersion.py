@@ -33,11 +33,12 @@ class Raft:
         self.q_buffer = {}          # Quorum messages that need to be treated
   
         ## Leader Variables
-        self.nextIndex = {}      # Map node to the list of log indexes that need to be sent to the node
-        self.matchIndex= {}      # Index do maior log que os nodos devem ter (segundo o lider)
-        self.messages = {}       # Map to store the messages of the client, so it can then respond
-        self.candidateCounter=0  # Counter for the number of positive receptions
-        self.votesReceived=0     # Counter for the number of votes received (positive or negative)
+        self.nextIndex = {}         # Map node to the list of log indexes that need to be sent to the node
+        self.matchIndex= {}         # Index do maior log que os nodos devem ter (segundo o lider)
+        self.messages = {}          # Map to store the messages of the client, so it can then respond
+        self.pre_candidateCounter=0 # Counter for the number of positive receptions
+        self.candidateCounter=0     # Counter for the number of positive receptions
+        self.votesReceived=0        # Counter for the number of votes received (positive or negative)
 
     def imLeader(self):
         return self.voted_for==self.node_id and self.tHeartbeat!=None
@@ -45,16 +46,8 @@ class Raft:
     def electionTimeOut(self):
         logging.info("Election Timeout! Start Candidate process on node: %s" + str(self.voted_for))
 
-        ##Code
-        # Voted for self
-        self.voted_for = self.node_id
-
-        # Current term increase
-        self.current_term+=1
-
         # Voted for self, so counter on 1
-        self.candidateCounter=1
-        self.votesReceived=1
+        self.pre_candidateCounter=1
 
         lastLogterm =0
         if len(self.logs)>0:
@@ -63,7 +56,7 @@ class Raft:
         #Send out vote requests
         for n in self.neighbours:
             send(self.node_id,n,
-                type="vote_request",
+                type="pre_vote_request",
                 term= self.current_term,
                 commitedLogs= self.commitIndex,
                 lastLogIndex= self.lastAppended,
@@ -155,10 +148,10 @@ class Raft:
                         for n in self.neighbours:
                             self.nextIndex[n]=0
                         
-                        n = len(self.neighbours)
+                        n = len(self.neighbours) + 1
 
                         self.prob = 1 if n <= 3 else comb(n-3,(n//2) - 1)/comb(n-2,n//2)
-                        self.prob = (self.prob*(n-2))/((n+self.prob)*(n-2))
+                        self.prob = 0 if self.prob == 0 else (self.prob*(n-2))/((n+self.prob)*(n-2))
 
                         logging.info('node %s initialized', self.node_id)
                         reply(msg, type='init_ok')
@@ -299,7 +292,7 @@ class Raft:
                 msg_term = msg.body.term
 
                 # If msg has a current term higher than mine
-                if self.current_term < msg_term: 
+                if self.current_term < msg_term and mtype != "pre_vote_request": 
                     if self.commitIndex <= msg_commit:
                         if self.tHeartbeat != None:
                             logging.debug("step down")
@@ -314,7 +307,7 @@ class Raft:
                         mtype="ignore_msg"
                     
                 
-                elif self.current_term > msg_term:
+                elif self.current_term > msg_term and mtype != "pre_vote_request":
                     if self.commitIndex < msg_commit:
                         if self.tHeartbeat != None:
                             logging.debug("step down")
@@ -462,7 +455,47 @@ class Raft:
                                 self.tHeartbeat.start()
                             elif self.votesReceived == len(self.neighbours) + 1:
                                 self.voted_for=None
-            
+
+                    case "pre_vote_request":
+                        if self.current_term <= msg.body.term and (self.voted_for==None or self.voted_for == msg.src) and (msg.body.lastLogIndex >= self.lastAppended):    
+                            if msg.body.lastLogIndex > self.lastAppended or (len(self.logs)>0 and self.logs[msg.body.lastLogIndex][3] <= msg.body.lastLogTerm) or len(self.logs)==0:
+                                send(self.node_id,msg.src,type="pre_vote_response",term=self.current_term,commitedLogs=self.commitIndex,vote=True)
+                            else:
+                                send(self.node_id,msg.src,type="pre_vote_response",term=self.current_term,commitedLogs=self.commitIndex,vote=False)
+                        else:
+                            send(self.node_id,msg.src,type="pre_vote_response",term=self.current_term,commitedLogs=self.commitIndex,vote=False)
+                    
+                    case "pre_vote_response":
+                        if msg.body.vote == True:
+                            self.candidateCounter+=1
+                            logging.info("Received one pre vote :" + str(self.candidateCounter))
+                            if self.candidateCounter>=self.majority:
+                                #become lider
+                                logging.info("I WILL BE THE KING :" + self.node_id)
+
+                                self.voted_for = self.node_id
+
+                                # Current term increase
+                                self.current_term+=1
+
+                                # Voted for self, so counter on 1
+                                self.candidateCounter=1
+                                self.votesReceived=1
+
+                                lastLogterm =0
+                                if len(self.logs)>0:
+                                    lastLogterm = self.logs[self.lastAppended][3]
+
+                                for n in self.neighbours:
+                                    send(self.node_id,n,
+                                        type="vote_request",
+                                        term= self.current_term,
+                                        commitedLogs= self.commitIndex,
+                                        lastLogIndex= self.lastAppended,
+                                        lastLogTerm = lastLogterm)
+
+
+
                 if not self.imLeader() and mtype!="ignore_msg":
                     self.tElection = threading.Timer(self.electionTimer , self.electionTimeOut)
                     self.tElection.start()
