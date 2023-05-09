@@ -115,6 +115,9 @@ class Raft:
                 list.append(self.logs[i])
 
 
+            self.nextIndex[n]+=len(list)
+
+
 
         return list,prevLog,prevTerm
 
@@ -122,6 +125,11 @@ class Raft:
         if self.lastAppended >= commit:
             self.commitIndex=commit
             self.kv[self.logs[self.commitIndex][0]]=self.logs[self.commitIndex][1]
+            logging.debug("logs aqui %s",str(self.logs))
+            if self.logs[self.commitIndex][2] in self.messages:
+                rep_msg = self.messages[self.logs[self.commitIndex][2]]
+                rep_type = "write_ok" if rep_msg.body.type == "write" else "cas_ok"
+                reply(rep_msg, type=rep_type)
 
 
     def mainCycle(self):
@@ -142,14 +150,14 @@ class Raft:
                         self.node_id = msg.body.node_id
                         #self.leader = self.node_id
                         self.neighbours = msg.body.node_ids
-                        self.majority = len(self.neighbours)/2 +1
+                        self.majority = len(self.neighbours)//2 +1
                         self.neighbours.remove(self.node_id)
                         for n in self.neighbours:
                             self.nextIndex[n]=0
                         
                         n = len(self.neighbours)
 
-                        self.prob = 1 if len(n) <= 3 else comb(n-3,(n%2) - 1)/comb(n-2,n%2)
+                        self.prob = 1 if n <= 3 else comb(n-3,(n//2) - 1)/comb(n-2,n//2)
                         self.prob = (self.prob*(n-2))/((n+self.prob)*(n-2))
 
                         logging.info('node %s initialized', self.node_id)
@@ -206,9 +214,6 @@ class Raft:
                                     prevLog     = prevLog,
                                     prevLogTerm = prevLogTerm,
                                     appendIndex = self.lastAppended)
-                
-                                if (self.nextIndex[n]==self.lastAppended):
-                                    self.nextIndex[n]+=len(self.selectEntries(n)[0])
 
                         else:
                             logging.debug("Write request to a follower redirect! To NodeID:%s",self.leader)
@@ -246,9 +251,6 @@ class Raft:
                                             prevLog     = prevLog,
                                             prevLogTerm = prevLogTerm,
                                             appendIndex = self.lastAppended)
-                        
-                                        if (self.nextIndex[n]==self.lastAppended):
-                                            self.nextIndex[n]+=len(self.selectEntries(n)[0])
 
 
                                 else:
@@ -302,7 +304,8 @@ class Raft:
                         if self.tHeartbeat != None:
                             logging.debug("step down")
                             self.tHeartbeat.cancel()
-                            self.tHeartbeat.join()
+                            if self.tHeartbeat.is_alive():
+                                self.tHeartbeat.join()
                             self.tHeartbeat.cancel()
                             self.tHeartbeat=None
                         self.current_term = msg_term
@@ -316,7 +319,8 @@ class Raft:
                         if self.tHeartbeat != None:
                             logging.debug("step down")
                             self.tHeartbeat.cancel()
-                            self.tHeartbeat.join()
+                            if self.tHeartbeat.is_alive():
+                                self.tHeartbeat.join()
                             self.tHeartbeat.cancel()
                             self.tHeartbeat=None
                         self.current_term = msg_term
@@ -332,7 +336,8 @@ class Raft:
                 if mtype!="ignore_msg": 
                     # Restart election timer
                     self.tElection.cancel()
-                    self.tElection.join(0)
+                    if self.tElection.is_alive():
+                        self.tElection.join(0)
 
                 match mtype:
                     case "append_entries":
@@ -346,7 +351,7 @@ class Raft:
                         sucess = True
                         self.leader = msg.src
                         # If it is not a heartbeat
-                        if len(entries)> 0: 
+                        if len(entries) > 0 or self.lastAppended != prevLogLeader: 
                             if leadersTerm == self.current_term :
                                 
                                 for e in entries:
@@ -371,11 +376,11 @@ class Raft:
                                     elif self.lastAppended > prevLogLeader: 
                                         # Clear all in from and replace the current one
                                         for i in range(appendIndexLeader,len(self.logs)): 
-                                            if len(self.logs)>0: self.logs.pop(appendIndexLeader)
+                                            if len(self.logs)>0: self.logs.pop(appendIndexLeader);self.lastAppended -= 1
                                         
                                         if self.logs[prevLogLeader][3] == prevTermLeader:
                                             self.logs.append(e)
-                                            self.lastAppended=appendIndexLeader
+                                            self.lastAppended+=1
                                             prevTermLeader= e[3]
                                             prevLogLeader+=1  
                                         else:
@@ -385,6 +390,7 @@ class Raft:
                                 type="append_reply",
                                 term = self.current_term,
                                 commitedLogs=self.commitIndex,
+                                lastAppended = self.lastAppended,
                                 sucess=sucess)
                     
                     case "append_reply":
@@ -402,9 +408,14 @@ class Raft:
                                     if counter>=self.majority:
                                       self.commitIndex+=1
                                       self.kv[self.logs[self.commitIndex][0]]=self.logs[self.commitIndex][1]
-                                      rep_msg = self.messages[self.logs[self.commitIndex][2]]
-                                      rep_type = "write_ok" if rep_msg.body.type == "write" else "cas_ok"
-                                      reply(rep_msg, type=rep_type)
+                                      logging.debug("logs aqui %s",str(self.logs))
+                                      logging.debug("keys: %s",self.messages.keys())
+                                      logging.debug("key: %s",self.logs[self.commitIndex][2])
+                                      if self.logs[self.commitIndex][2] in self.messages:
+                                          rep_msg = self.messages[self.logs[self.commitIndex][2]]
+                                          rep_type = "write_ok" if rep_msg.body.type == "write" else "cas_ok"
+                                          reply(rep_msg, type=rep_type)
+
                                       for n in self.neighbours:
                                           send(self.node_id,n,
                                               type="commit_entries",
@@ -417,8 +428,8 @@ class Raft:
                         else:
                             #AppendEntries fails because of log inconsistency: decrement nextIndex and retry
                             #TODO Improvement needed
-                            self.nextIndex[msg.src]-=1
-                            pass
+                            self.nextIndex[msg.src] = msg.body.lastAppended+1
+                            
 
                     case "commit_entries":
                         commitLog = msg.body.commitedLogs
@@ -426,7 +437,7 @@ class Raft:
                                 
                     case "vote_request":
                         if self.current_term <= msg.body.term and (self.voted_for==None or self.voted_for == msg.src) and (msg.body.lastLogIndex >= self.lastAppended):    
-                            if (len(self.logs)>0 and self.logs[msg.body.lastLogIndex][3] <= msg.body.lastLogTerm) or len(self.logs)==0:
+                            if msg.body.lastLogIndex > self.lastAppended or (len(self.logs)>0 and self.logs[msg.body.lastLogIndex][3] <= msg.body.lastLogTerm) or len(self.logs)==0:
                                 self.voted_for=msg.src
                                 send(self.node_id,msg.src,type="vote_response",term=self.current_term,commitedLogs=self.commitIndex,vote=True)
                             else:
