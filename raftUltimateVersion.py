@@ -165,13 +165,13 @@ class Raft:
                             else:
                                 reply(msg,type="read_ok", value=value)
                         else:
-                            if random.randint(0,100) * 0.01 <= self.prob:
+                            if random.randint(0,100) * 0.01 <= self.prob or len(self.neighbours) == 1:
                                 logging.debug("Read request to a follower redirect! To NodeID:%s",self.voted_for)
                                 if self.voted_for != None and self.voted_for != self.node_id:send(self.node_id,self.voted_for,value=msg,type="redirect")
                             else: 
                                 logging.debug("Read request to quorum read")
                                 for i in self.neighbours:
-                                    if i != self.node_id:   #TODO: Faltar ver se se pode tirar o leader 
+                                    if i != self.voted_for:   #TODO: Faltar ver se se pode tirar o leader 
                                         send(self.node_id,i,type="q_read",key=key,id=messageid)
                                 logging.debug(value)
                                 self.q_buffer[messageid] = (1,{value:1},msg) 
@@ -276,8 +276,9 @@ class Raft:
                                     reply(r_msg,type="read_ok", value=value)
                                 del self.q_buffer[msg.body.id]
 
-                            elif num == len(self.neighbours) + 1: # In case a majoraty didnt happend
-                                del self.q_buffer[msg.body.id]
+                            elif num == len(self.neighbours): # In case a majoraty didnt happend
+                                logging.debug("Read request to a follower redirect! To NodeID:%s",self.voted_for)
+                                if self.voted_for != None and self.voted_for != self.node_id:send(self.node_id,self.voted_for,value=msg,type="redirect")
 
                             else:
                                 self.q_buffer[msg.body.id] = (num,dic,r_msg)
