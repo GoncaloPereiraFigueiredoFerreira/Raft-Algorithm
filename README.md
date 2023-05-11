@@ -8,13 +8,15 @@ For testing the group relied mostly on the "maelstrom" testing tool, that allowe
 ## Maelstrom testing
 
 #1- Basic test with constant latency distribution and a slow rate of request
-
+```
 ./maelstrom test -w lin-kv --time-limit 20 --node-count 7 --bin ../Raft-Algorithm/raftUltimateVersion.py --concurrency 2n --latency 25 --latency-dist constant --rate 10 
+```
 
 #2- Test with variable latency following an exponential distribuition and a slow rate of requests (will most likely cause leadership changes and pre-vote prevented election situations)
-
+```
 ./maelstrom test -w lin-kv --time-limit 20 --node-count 7 --bin ../Raft-Algorithm/raftUltimateVersion.py --concurrency 2n --latency 40  --latency-dist exponential --rate 10 
-
+```
 #3- Test that introduces random partitions between nodes (will cause data loss in nodes, and subsequent recovery of them, coupled with leader elections)
-
+```
 ./maelstrom test -w lin-kv --time-limit 20 --node-count 7 --bin ../Raft-Algorithm/raftUltimateVersion.py --concurrency 2n --latency 25 --latency-dist uniform --rate 10 --nemesis partition --nemesis-interval 10
+```
