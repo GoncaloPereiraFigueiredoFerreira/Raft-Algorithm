@@ -29,7 +29,6 @@ class Raft:
         self.tElection = None       # Timer for election
         self.heartBeatTimer = 0.050 # Timeout for heartbeat
         self.electionTimer = random.randint(150,300) * 0.0005 # Timeout for election
-        self.leader = None          # Last src of an AppendEntrie
         self.q_buffer = {}          # Quorum messages that need to be treated
   
         ## Leader Variables
@@ -37,6 +36,7 @@ class Raft:
         self.matchIndex= {}         # Index do maior log que os nodos devem ter (segundo o lider)
         self.messages = {}          # Map to store the messages of the client, so it can then respond
         self.pre_candidateCounter=0 # Counter for the number of positive receptions
+        self.pre_candidateCounterF=0# Counter for the number of  False   receptions
         self.candidateCounter=0     # Counter for the number of positive receptions
         self.votesReceived=0        # Counter for the number of votes received (positive or negative)
 
@@ -48,6 +48,7 @@ class Raft:
 
         # Voted for self, so counter on 1
         self.pre_candidateCounter=1
+        self.pre_candidateCounterF=1
 
         lastLogterm =0
         if len(self.logs)>0:
@@ -80,7 +81,6 @@ class Raft:
                     type        = "append_entries",
                     term        = self.current_term,
                     commitedLogs= self.commitIndex,
-                    leaderId    = self.node_id,
                     entries     = entries,
                     prevLog     = prevLog,
                     prevLogTerm = prevLogTerm,
@@ -141,7 +141,6 @@ class Raft:
                 match mtype:
                     case "init":
                         self.node_id = msg.body.node_id
-                        #self.leader = self.node_id
                         self.neighbours = msg.body.node_ids
                         self.majority = len(self.neighbours)//2 +1
                         self.neighbours.remove(self.node_id)
@@ -166,13 +165,13 @@ class Raft:
                             else:
                                 reply(msg,type="read_ok", value=value)
                         else:
-                            if random.randint(0,100) * 0.01 <= self.prob:
-                                logging.debug("Read request to a follower redirect! To NodeID:%s",self.leader)
-                                if self.leader != None:send(self.node_id,self.leader,value=msg,type="redirect")
+                            if random.randint(0,100) * 0.01 <= self.prob or len(self.neighbours) == 1:
+                                logging.debug("Read request to a follower redirect! To NodeID:%s",self.voted_for)
+                                if self.voted_for != None and self.voted_for != self.node_id:send(self.node_id,self.voted_for,value=msg,type="redirect")
                             else: 
                                 logging.debug("Read request to quorum read")
                                 for i in self.neighbours:
-                                    if i != self.node_id:   #TODO: Faltar ver se se pode tirar o leader 
+                                    if i != self.voted_for:   #TODO: Faltar ver se se pode tirar o leader 
                                         send(self.node_id,i,type="q_read",key=key,id=messageid)
                                 logging.debug(value)
                                 self.q_buffer[messageid] = (1,{value:1},msg) 
@@ -202,15 +201,14 @@ class Raft:
                                     type        = "append_entries",
                                     term        = self.current_term,
                                     commitedLogs= self.commitIndex,
-                                    leaderId    = self.node_id,
                                     entries     = entries,
                                     prevLog     = prevLog,
                                     prevLogTerm = prevLogTerm,
                                     appendIndex = self.lastAppended)
 
                         else:
-                            logging.debug("Write request to a follower redirect! To NodeID:%s",self.leader)
-                            if self.leader != None:send(self.node_id,self.leader,value=msg,type="redirect")
+                            logging.debug("Write request to a follower redirect! To NodeID:%s",self.voted_for)
+                            if self.voted_for != None and self.voted_for != self.node_id:send(self.node_id,self.voted_for,value=msg,type="redirect")
                     
                     case "cas":
                         #logging.info("compare %s to %s %s",msg.body.key,msg.body["from"],msg.body.to)
@@ -239,7 +237,6 @@ class Raft:
                                             type        = "append_entries",
                                             term        = self.current_term,
                                             commitedLogs= self.commitIndex,
-                                            leaderId    = self.node_id,
                                             entries     = entries,
                                             prevLog     = prevLog,
                                             prevLogTerm = prevLogTerm,
@@ -251,8 +248,8 @@ class Raft:
                             else:
                                 reply(msg,type="error",code=20)
                         else:
-                            logging.debug("Cas request to a follower redirect! To NodeID:%s",self.leader)
-                            if self.leader != None:send(self.node_id,self.leader,value=msg,type="redirect")
+                            logging.debug("Cas request to a follower redirect! To NodeID:%s",self.voted_for)
+                            if self.voted_for != None and self.voted_for != self.node_id:send(self.node_id,self.voted_for,value=msg,type="redirect")
 
                     case "q_read":
                         key = msg.body.key
@@ -280,7 +277,8 @@ class Raft:
                                 del self.q_buffer[msg.body.id]
 
                             elif num == len(self.neighbours): # In case a majoraty didnt happend
-                                del self.q_buffer[msg.body.id]
+                                logging.debug("Read request to a follower redirect! To NodeID:%s",self.voted_for)
+                                if self.voted_for != None and self.voted_for != self.node_id:send(self.node_id,self.voted_for,value=msg,type="redirect")
 
                             else:
                                 self.q_buffer[msg.body.id] = (num,dic,r_msg)
@@ -292,8 +290,8 @@ class Raft:
                 msg_term = msg.body.term
 
                 # If msg has a current term higher than mine
-                if self.current_term < msg_term and mtype != "pre_vote_request": 
-                    if self.commitIndex <= msg_commit:
+                if self.current_term != msg_term and mtype != "pre_vote_request": 
+                    if (self.commitIndex <= msg_commit and self.current_term < msg_term) or (self.commitIndex < msg_commit and self.current_term > msg_term):
                         if self.tHeartbeat != None:
                             logging.debug("step down")
                             self.tHeartbeat.cancel()
@@ -305,24 +303,7 @@ class Raft:
                         self.voted_for = None
                     else:
                         mtype="ignore_msg"
-                    
-                
-                elif self.current_term > msg_term and mtype != "pre_vote_request":
-                    if self.commitIndex < msg_commit:
-                        if self.tHeartbeat != None:
-                            logging.debug("step down")
-                            self.tHeartbeat.cancel()
-                            if self.tHeartbeat.is_alive():
-                                self.tHeartbeat.join()
-                            self.tHeartbeat.cancel()
-                            self.tHeartbeat=None
-                        self.current_term = msg_term
-                        self.voted_for = None
-                    else:
-                        #Ignoras a mensagem 
-                        mtype="ignore_msg"
-                    #Envia msg ou torna-te candidato
-                
+
                 if self.commitIndex < msg_commit and mtype!="ignore_msg":    
                     self.commitEntry(msg_commit)
 
@@ -342,7 +323,7 @@ class Raft:
                         appendIndexLeader = msg.body.appendIndex
                         
                         sucess = True
-                        self.leader = msg.src
+                        self.voted_for = msg.src
                         # If it is not a heartbeat
                         if len(entries) > 0 or self.lastAppended != prevLogLeader: 
                             if leadersTerm == self.current_term :
@@ -350,6 +331,7 @@ class Raft:
                                 for e in entries:
                                     if self.lastAppended < prevLogLeader:
                                         sucess=False
+                                        break
 
                                     elif self.lastAppended == prevLogLeader and prevLogLeader == -1:
                                         self.logs.append(e)
@@ -365,6 +347,7 @@ class Raft:
                                     
                                     elif self.lastAppended == prevLogLeader and self.logs[prevLogLeader][3] != prevTermLeader:
                                         sucess=False
+                                        break
                                 
                                     elif self.lastAppended > prevLogLeader: 
                                         # Clear all in from and replace the current one
@@ -377,7 +360,8 @@ class Raft:
                                             prevTermLeader= e[3]
                                             prevLogLeader+=1  
                                         else:
-                                            sucess=False                   
+                                            sucess=False
+                                            break                   
                                     
                             send(self.node_id,msg.src,
                                 type="append_reply",
@@ -387,41 +371,32 @@ class Raft:
                                 sucess=sucess)
                     
                     case "append_reply":
-                        if msg.body.sucess:
+                        if not(msg.src in self.matchIndex) or self.matchIndex[msg.src] < msg.body.lastAppended:
                             self.matchIndex[msg.src] = msg.body.lastAppended
-                            if self.lastAppended > self.commitIndex:
-                                for k in range(self.commitIndex+1,self.lastAppended+1):
-                                    counter = 0
-                                   
-                                    for i in self.matchIndex.keys():
-                                        if i == self.node_id:
-                                            counter+=1
-                                        elif self.matchIndex[i] >= k:
-                                            counter+=1
-                                    if counter>=self.majority:
-                                      self.commitIndex+=1
-                                      self.kv[self.logs[self.commitIndex][0]]=self.logs[self.commitIndex][1]
-                                      logging.debug("logs aqui %s",str(self.logs))
-                                      logging.debug("keys: %s",self.messages.keys())
-                                      logging.debug("key: %s",self.logs[self.commitIndex][2])
-                                      if self.logs[self.commitIndex][2] in self.messages:
-                                          rep_msg = self.messages[self.logs[self.commitIndex][2]]
-                                          rep_type = "write_ok" if rep_msg.body.type == "write" else "cas_ok"
-                                          reply(rep_msg, type=rep_type)
-
-                                      for n in self.neighbours:
-                                          send(self.node_id,n,
-                                              type="commit_entries",
-                                              term=self.current_term,
-                                              commitedLogs= self.commitIndex,
-                                              leaderID=self.node_id)
-                                    else:
-                                        break
-                                    
-                        else:
-                            #AppendEntries fails because of log inconsistency: decrement nextIndex and retry
-                            #TODO Improvement needed
                             self.nextIndex[msg.src] = msg.body.lastAppended+1
+
+                        if self.lastAppended > self.commitIndex:
+                            for k in range(self.commitIndex+1,self.lastAppended+1):
+                                counter = 0
+                               
+                                for i in self.matchIndex.keys():
+                                    if i == self.node_id:
+                                        counter+=1
+                                    elif self.matchIndex[i] >= k:
+                                        counter+=1
+                                if counter>=self.majority:
+                                    self.commitEntry(self.commitIndex+1)
+
+                                    for n in self.neighbours:
+                                        send(self.node_id,n,
+                                            type="commit_entries",
+                                            term=self.current_term,
+                                            commitedLogs= self.commitIndex)
+                                else:
+                                    break
+                                    
+
+                            
                             
 
                     case "commit_entries":
@@ -457,7 +432,7 @@ class Raft:
                                 self.voted_for=None
 
                     case "pre_vote_request":
-                        if self.current_term <= msg.body.term and (self.voted_for==None or self.voted_for == msg.src) and (msg.body.lastLogIndex >= self.lastAppended):    
+                        if self.current_term <= msg.body.term and (msg.body.lastLogIndex >= self.lastAppended):    
                             if msg.body.lastLogIndex > self.lastAppended or (len(self.logs)>0 and self.logs[msg.body.lastLogIndex][3] <= msg.body.lastLogTerm) or len(self.logs)==0:
                                 send(self.node_id,msg.src,type="pre_vote_response",term=self.current_term,commitedLogs=self.commitIndex,vote=True)
                             else:
@@ -467,9 +442,9 @@ class Raft:
                     
                     case "pre_vote_response":
                         if msg.body.vote == True:
-                            self.candidateCounter+=1
-                            logging.info("Received one pre vote :" + str(self.candidateCounter))
-                            if self.candidateCounter>=self.majority:
+                            self.pre_candidateCounter+=1
+                            logging.info("Received one pre vote :" + str(self.pre_candidateCounter))
+                            if self.pre_candidateCounter>=self.majority:
                                 #become lider
                                 logging.info("I WILL BE THE KING :" + self.node_id)
 
@@ -493,10 +468,14 @@ class Raft:
                                         commitedLogs= self.commitIndex,
                                         lastLogIndex= self.lastAppended,
                                         lastLogTerm = lastLogterm)
+                        else:
+                            self.pre_candidateCounterF+=1
+                            if self.pre_candidateCounter >= self.majority:
+                                self.electionTimer += 150 * 0.0005
 
 
 
-                if not self.imLeader() and mtype!="ignore_msg":
+                if not self.imLeader() and not (mtype in ["ignore_msg"]):
                     self.tElection = threading.Timer(self.electionTimer , self.electionTimeOut)
                     self.tElection.start()
                         
