@@ -97,7 +97,10 @@ class Raft:
         prevLog= self.nextIndex[n] - 1
         if self.nextIndex[n]>0 and len(self.logs)>0:
             logging.debug("len logs: %s | prevlog: %s",len(self.logs),prevLog)
-            prevTerm= self.logs[prevLog][3]
+            if len(self.logs) <= prevLog:
+                prevTerm= self.logs[len(self.logs)-1][3]
+            else:
+                prevTerm= self.logs[prevLog][3]
         else:
             prevTerm=None
 
@@ -108,7 +111,7 @@ class Raft:
                 list.append(self.logs[i])
 
 
-            self.nextIndex[n]+=len(list)
+            self.nextIndex[n]=self.lastAppended+1
 
 
 
@@ -351,8 +354,8 @@ class Raft:
                                 
                                     elif self.lastAppended > prevLogLeader: 
                                         # Clear all in from and replace the current one
-                                        for i in range(appendIndexLeader,len(self.logs)): 
-                                            if len(self.logs)>0: self.logs.pop(appendIndexLeader);self.lastAppended -= 1
+                                        for i in range(prevLogLeader+1,len(self.logs)): 
+                                            if len(self.logs)>0: self.logs.pop(prevLogLeader+1);self.lastAppended -= 1
                                         
                                         if self.logs[prevLogLeader][3] == prevTermLeader:
                                             self.logs.append(e)
@@ -371,9 +374,8 @@ class Raft:
                                 sucess=sucess)
                     
                     case "append_reply":
-                        if not(msg.src in self.matchIndex) or self.matchIndex[msg.src] < msg.body.lastAppended:
-                            self.matchIndex[msg.src] = msg.body.lastAppended
-                            self.nextIndex[msg.src] = msg.body.lastAppended+1
+                        self.matchIndex[msg.src] = msg.body.lastAppended
+                        self.nextIndex[msg.src] = msg.body.lastAppended+1
 
                         if self.lastAppended > self.commitIndex:
                             for k in range(self.commitIndex+1,self.lastAppended+1):
