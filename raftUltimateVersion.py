@@ -118,6 +118,7 @@ class Raft:
         return list,prevLog,prevTerm
 
     def commitEntry(self,commit):
+        "Method that commits all the possible logs until the commit index is reached"
         if self.lastAppended >= commit:
             self.commitIndex=commit
             self.kv[self.logs[self.commitIndex][0]]=self.logs[self.commitIndex][1]
@@ -168,6 +169,7 @@ class Raft:
                             else:
                                 reply(msg,type="read_ok", value=value)
                         else:
+                            # Choice, based on a probability, of creating a read quorum or redirecting the message to the leader 
                             if random.randint(0,100) * 0.01 <= self.prob or len(self.neighbours) == 1:
                                 logging.debug("Read request to a follower redirect! To NodeID:%s",self.voted_for)
                                 if self.voted_for != None and self.voted_for != self.node_id:send(self.node_id,self.voted_for,value=msg,type="redirect")
@@ -210,14 +212,13 @@ class Raft:
                                     appendIndex = self.lastAppended)
 
                         else:
+                            #Redirect Message
                             logging.debug("Write request to a follower redirect! To NodeID:%s",self.voted_for)
                             if self.voted_for != None and self.voted_for != self.node_id:send(self.node_id,self.voted_for,value=msg,type="redirect")
                     
                     case "cas":
-                        #logging.info("compare %s to %s %s",msg.body.key,msg.body["from"],msg.body.to)
                         if self.imLeader():
                             key = msg.body.key
-
 
                             if(key in self.kv):
                                 if (self.kv[key] == getattr(msg.body,"from")): 
@@ -251,15 +252,18 @@ class Raft:
                             else:
                                 reply(msg,type="error",code=20)
                         else:
+                            #Redirect CAS operation
                             logging.debug("Cas request to a follower redirect! To NodeID:%s",self.voted_for)
                             if self.voted_for != None and self.voted_for != self.node_id:send(self.node_id,self.voted_for,value=msg,type="redirect")
 
                     case "q_read":
+                        # Received a Quorum read request
                         key = msg.body.key
                         value = self.kv[key] if key in self.kv else None
                         reply(msg,type="q_read_ok", value=value,id=msg.body.id)
 
                     case "q_read_ok":
+                        # Received a Quorum read response
                         if msg.body.id in self.q_buffer:
                             value = msg.body.value
                             num,dic,r_msg = self.q_buffer[msg.body.id]
@@ -276,10 +280,13 @@ class Raft:
                                 if value == None:
                                     reply(r_msg,type="error", code=20)
                                 else:
+                                    # Majority reached and value replied to client
                                     reply(r_msg,type="read_ok", value=value)
                                 del self.q_buffer[msg.body.id]
-
-                            elif num == len(self.neighbours): # In case a majoraty didnt happend
+                                
+                            # In case a majoraty didnt happend
+                            elif num == len(self.neighbours): 
+                                # Redirect to the leader
                                 logging.debug("Read request to a follower redirect! To NodeID:%s",self.voted_for)
                                 if self.voted_for != None and self.voted_for != self.node_id:send(self.node_id,self.voted_for,value=msg,type="redirect")
 
@@ -292,7 +299,7 @@ class Raft:
                 msg_commit = msg.body.commitedLogs
                 msg_term = msg.body.term
 
-                # If msg has a current term higher than mine
+                # If msg has a current term different than mine
                 if self.current_term != msg_term and mtype != "pre_vote_request": 
                     if (self.commitIndex <= msg_commit and self.current_term < msg_term) or (self.commitIndex < msg_commit and self.current_term > msg_term):
                         if self.tHeartbeat != None:
@@ -306,7 +313,8 @@ class Raft:
                         self.voted_for = None
                     else:
                         mtype="ignore_msg"
-
+                
+                #Commit uncommited entries
                 if self.commitIndex < msg_commit and mtype!="ignore_msg":    
                     self.commitEntry(msg_commit)
 
@@ -327,11 +335,12 @@ class Raft:
                         
                         sucess = True
                         self.voted_for = msg.src
-                        # If it is not a heartbeat
+                        # If it is not a heartbeat or if the last appended differs from local one
                         if len(entries) > 0 or self.lastAppended != prevLogLeader: 
                             if leadersTerm == self.current_term :
                                 
                                 for e in entries:
+                                    # Sent an entry too ahead of currently owned state
                                     if self.lastAppended < prevLogLeader:
                                         sucess=False
                                         break
@@ -347,7 +356,7 @@ class Raft:
                                         self.lastAppended+=1  
                                         prevTermLeader= e[3]
                                         prevLogLeader+=1
-                                    
+                                    # Message inconsistency
                                     elif self.lastAppended == prevLogLeader and self.logs[prevLogLeader][3] != prevTermLeader:
                                         sucess=False
                                         break
@@ -387,6 +396,7 @@ class Raft:
                                     elif self.matchIndex[i] >= k:
                                         counter+=1
                                 if counter>=self.majority:
+                                    # Reached majority on entry; Commiting it
                                     self.commitEntry(self.commitIndex+1)
 
                                     for n in self.neighbours:
@@ -396,10 +406,6 @@ class Raft:
                                             commitedLogs= self.commitIndex)
                                 else:
                                     break
-                                    
-
-                            
-                            
 
                     case "commit_entries":
                         commitLog = msg.body.commitedLogs
@@ -421,7 +427,7 @@ class Raft:
                             self.votesReceived+=1
                             logging.info("Received one vote :" + str(self.candidateCounter))
                             if self.candidateCounter>=self.majority:
-                                #become lider
+                                #become leadder
                                 logging.info("I AM THE KING :" + self.node_id)
                                 for n in self.neighbours:
                                     self.nextIndex[n]=self.lastAppended+1
@@ -472,11 +478,13 @@ class Raft:
                                         lastLogTerm = lastLogterm)
                         else:
                             self.pre_candidateCounterF+=1
+                            # Punish pre_candidates that fail to reach majority of prevotes
+                            # This will reduce their attemps on being leaders
                             if self.pre_candidateCounter >= self.majority:
                                 self.electionTimer += 150 * 0.0005
 
 
-
+                # Restart Election timeout
                 if not self.imLeader() and not (mtype in ["ignore_msg"]):
                     self.tElection = threading.Timer(self.electionTimer , self.electionTimeOut)
                     self.tElection.start()
