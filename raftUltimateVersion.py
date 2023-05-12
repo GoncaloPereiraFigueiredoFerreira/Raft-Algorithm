@@ -357,7 +357,7 @@ class Raft:
                                         for i in range(prevLogLeader+1,len(self.logs)): 
                                             if len(self.logs)>0: self.logs.pop(prevLogLeader+1);self.lastAppended -= 1
                                         
-                                        if self.logs[prevLogLeader][3] == prevTermLeader:
+                                        if prevLogLeader == -1 or self.logs[prevLogLeader][3] == prevTermLeader:
                                             self.logs.append(e)
                                             self.lastAppended+=1
                                             prevTermLeader= e[3]
