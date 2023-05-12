@@ -40,6 +40,9 @@ class Raft:
         self.candidateCounter=0     # Counter for the number of positive receptions
         self.votesReceived=0        # Counter for the number of votes received (positive or negative)
 
+        ## Lock
+        self.lock = threading.Lock()
+
     def imLeader(self):
         return self.voted_for==self.node_id and self.tHeartbeat!=None
 
@@ -92,6 +95,7 @@ class Raft:
     
     def selectEntries(self,n):
         """Selects which entries should be sent to node n"""
+        #self.lock.acquire()
         list = []
         term=None
         prevLog= self.nextIndex[n] - 1
@@ -103,15 +107,15 @@ class Raft:
 
         if self.nextIndex[n] <= self.lastAppended:
             term=self.logs[self.nextIndex[n]][3]
-            for i in range(self.nextIndex[n],self.lastAppended+1):
+            for i in range(prevLog+1,self.lastAppended+1):
                 #if term != self.logs[i][2]: break
                 list.append(self.logs[i])
 
 
-            self.nextIndex[n]+=len(list)
+            #self.nextIndex[n]+=len(list)
 
 
-
+        #self.lock.release()
         return list,prevLog,prevTerm
 
     def commitEntry(self,commit):
@@ -327,7 +331,22 @@ class Raft:
                         # If it is not a heartbeat
                         if len(entries) > 0 or self.lastAppended != prevLogLeader: 
                             if leadersTerm == self.current_term :
-                                
+                                if self.lastAppended > prevLogLeader: 
+                                    logging.debug("Reducao Last appended: %s",self.lastAppended)
+                                    logging.debug("Reducao LogTerm%s",prevLogLeader)
+                                    # Clear all in from and replace the current one
+                                    for i in range(prevLogLeader+1,len(self.logs)): 
+                                        if len(self.logs)>0: self.logs.pop(prevLogLeader+1);self.lastAppended -= 1
+                                    logging.debug("Reducao Last appended reduzido: %s",self.lastAppended)
+                                if self.lastAppended == prevLogLeader and  ( prevLogLeader==-1 or self.logs[prevLogLeader][3] == prevTermLeader):
+                                    logging.debug("== Last appended: %s",self.lastAppended)
+                                    logging.debug("== LogTerm%s",prevLogLeader)
+                                    for e in entries:
+                                        self.logs.append(e)
+                                        self.lastAppended+=1
+                                else:
+                                    sucess=False    
+                                '''
                                 for e in entries:
                                     if self.lastAppended < prevLogLeader:
                                         sucess=False
@@ -351,8 +370,8 @@ class Raft:
                                 
                                     elif self.lastAppended > prevLogLeader: 
                                         # Clear all in from and replace the current one
-                                        for i in range(appendIndexLeader,len(self.logs)): 
-                                            if len(self.logs)>0: self.logs.pop(appendIndexLeader);self.lastAppended -= 1
+                                        for i in range(prevLogLeader+1,len(self.logs)): 
+                                            if len(self.logs)>0: self.logs.pop(prevLogLeader);self.lastAppended -= 1
                                         
                                         if self.logs[prevLogLeader][3] == prevTermLeader:
                                             self.logs.append(e)
@@ -361,8 +380,8 @@ class Raft:
                                             prevLogLeader+=1  
                                         else:
                                             sucess=False
-                                            break                   
-                                    
+                                            break      
+                                '''
                             send(self.node_id,msg.src,
                                 type="append_reply",
                                 term = self.current_term,
@@ -371,10 +390,16 @@ class Raft:
                                 sucess=sucess)
                     
                     case "append_reply":
+                        #self.lock.acquire()
+                        if msg.body.sucess == False:
+                            if self.nextIndex>5:
+                                self.nextIndex[msg.src]=self.nextIndex-5
+                            else:
+                                self.nextIndex[msg.src]=0
                         if not(msg.src in self.matchIndex) or self.matchIndex[msg.src] < msg.body.lastAppended:
                             self.matchIndex[msg.src] = msg.body.lastAppended
                             self.nextIndex[msg.src] = msg.body.lastAppended+1
-
+                        #self.lock.release()
                         if self.lastAppended > self.commitIndex:
                             for k in range(self.commitIndex+1,self.lastAppended+1):
                                 counter = 0
