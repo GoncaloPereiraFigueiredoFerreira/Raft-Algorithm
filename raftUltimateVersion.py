@@ -338,42 +338,34 @@ class Raft:
                         # If it is not a heartbeat or if the last appended differs from local one
                         if len(entries) > 0 or self.lastAppended != prevLogLeader: 
                             if leadersTerm == self.current_term :
-                                
-                                for e in entries:
-                                    # Sent an entry too ahead of currently owned state
-                                    if self.lastAppended < prevLogLeader:
-                                        sucess=False
-                                        break
 
-                                    elif self.lastAppended == prevLogLeader and prevLogLeader == -1:
-                                        self.logs.append(e)
-                                        self.lastAppended+=1  
-                                        prevTermLeader= e[3]
-                                        prevLogLeader+=1
+                                # Sent an entry too ahead of currently owned state
+                                if self.lastAppended < prevLogLeader:
+                                    sucess=False
 
-                                    elif self.lastAppended == prevLogLeader and  self.logs[prevLogLeader][3] == prevTermLeader:
-                                        self.logs.append(e)
-                                        self.lastAppended+=1  
-                                        prevTermLeader= e[3]
-                                        prevLogLeader+=1
-                                    # Message inconsistency
-                                    elif self.lastAppended == prevLogLeader and self.logs[prevLogLeader][3] != prevTermLeader:
+                                elif self.lastAppended == prevLogLeader and prevLogLeader == -1:
+                                    sucess=True
+
+                                elif self.lastAppended == prevLogLeader and  self.logs[prevLogLeader][3] == prevTermLeader:
+                                    sucess=True
+                                # Message inconsistency
+                                elif self.lastAppended == prevLogLeader and self.logs[prevLogLeader][3] != prevTermLeader:
+                                    sucess=False
+                            
+                                elif self.lastAppended > prevLogLeader: 
+                                    # Clear all in from and replace the current one
+                                    for i in range(prevLogLeader+1,len(self.logs)): 
+                                        if len(self.logs)>0: self.logs.pop(prevLogLeader+1);self.lastAppended -= 1
+                                    
+                                    if prevLogLeader == -1 or self.logs[prevLogLeader][3] == prevTermLeader:
+                                        sucess=True
+                                    else:
                                         sucess=False
-                                        break
                                 
-                                    elif self.lastAppended > prevLogLeader: 
-                                        # Clear all in from and replace the current one
-                                        for i in range(prevLogLeader+1,len(self.logs)): 
-                                            if len(self.logs)>0: self.logs.pop(prevLogLeader+1);self.lastAppended -= 1
-                                        
-                                        if prevLogLeader == -1 or self.logs[prevLogLeader][3] == prevTermLeader:
-                                            self.logs.append(e)
-                                            self.lastAppended+=1
-                                            prevTermLeader= e[3]
-                                            prevLogLeader+=1  
-                                        else:
-                                            sucess=False
-                                            break                   
+                                if sucess:
+                                    for e in entries:
+                                        self.logs.append(e)
+                                        self.lastAppended += 1
                                     
                             send(self.node_id,msg.src,
                                 type="append_reply",
